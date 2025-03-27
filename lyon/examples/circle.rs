@@ -6,8 +6,10 @@ use lyon_tessellation::{FillOptions, FillTessellator};
 mod sandbox;
 use sandbox::Sandbox;
 
-fn main() -> anyhow::Result<()> {
-    CircleExample::run()
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    CircleExample::run().await?;
+    Ok(())
 }
 
 struct CircleExample {

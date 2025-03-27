@@ -8,8 +8,10 @@ use lyon_tessellation::{FillOptions, StrokeOptions};
 mod sandbox;
 use sandbox::Sandbox;
 
-fn main() -> anyhow::Result<()> {
-    PathExample::run()
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    PathExample::run().await?;    
+    Ok(())
 }
 
 struct PathExample {

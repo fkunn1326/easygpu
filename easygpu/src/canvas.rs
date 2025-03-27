@@ -1,7 +1,6 @@
-use figures::SizedRect;
+use figures::Rect;
 
 use crate::device::Device;
-use crate::transform::ScreenSpace;
 
 pub trait Canvas {
     type Color;
@@ -11,14 +10,14 @@ pub trait Canvas {
     fn transfer(
         &self,
         buf: &[Self::Color],
-        r: SizedRect<i32, ScreenSpace>,
+        r: Rect<i32>,
         device: &mut Device,
         encoder: &mut wgpu::CommandEncoder,
     );
     fn blit(
         &self,
-        from: SizedRect<u32, ScreenSpace>,
-        dst: SizedRect<u32, ScreenSpace>,
+        from: Rect<u32>,
+        dst: Rect<u32>,
         encoder: &mut wgpu::CommandEncoder,
     );
 }

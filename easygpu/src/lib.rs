@@ -1,6 +1,7 @@
 #![warn(clippy::all)]
 
 pub mod binding;
+pub mod blending;
 pub mod buffers;
 pub mod canvas;
 pub mod color;
@@ -21,6 +22,7 @@ pub use {figures, wgpu};
 pub mod prelude {
     pub use super::binding::*;
     pub use super::buffers::*;
+    pub use super::blending::*;
     pub use super::canvas::*;
     pub use super::color::*;
     pub use super::device::*;

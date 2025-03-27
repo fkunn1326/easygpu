@@ -1,68 +1,101 @@
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
-use figures::{Pixels, Size, SizedRect};
+use figures::{Size, Rect};
 use wgpu::{FilterMode, MultisampleState, TextureAspect, TextureFormat, TextureViewDescriptor};
 
 use crate::binding::{Bind, BindingGroup, BindingGroupLayout};
+use crate::blending::Blending;
 use crate::buffers::{DepthBuffer, Framebuffer, IndexBuffer, UniformBuffer, VertexBuffer};
 use crate::canvas::Canvas;
 use crate::color::{Bgra8, Rgba};
-use crate::device::Device;
-use crate::error::Error;
+use crate::device::{Device, DeviceBuilder};
 use crate::frame::Frame;
-use crate::pipeline::{AbstractPipeline, Blending};
+use crate::pipeline::AbstractPipeline;
 use crate::sampler::Sampler;
 use crate::texture::Texture;
-use crate::transform::ScreenSpace;
 use crate::vertex::VertexLayout;
 
 pub trait Draw {
     fn draw<'a>(&'a self, binding: &'a BindingGroup, pass: &mut wgpu::RenderPass<'a>);
 }
 
+
+pub struct RendererBuilder<'a> {
+    surface: Option<wgpu::Surface<'a>>,
+    instance: Option<wgpu::Instance>,
+    adapter: Option<wgpu::Adapter>,
+    sample_count: u32,
+    offscreen: bool,
+}
+
+impl<'a> RendererBuilder<'a> {
+    pub fn new() -> Self {
+        Self {
+            surface: None,
+            instance: None,
+            adapter: None,
+            sample_count: 0,
+            offscreen: false,
+        }
+    }
+
+    pub fn with_surface(mut self, surface: wgpu::Surface<'a>, instance: wgpu::Instance, sample_count: u32) -> Self {
+        self.surface = Some(surface);
+        self.instance = Some(instance);
+        self.sample_count = sample_count;
+        self
+    }
+
+    pub fn with_offscreen(mut self, offscreen: bool, adapter: wgpu::Adapter, sample_count: u32) -> Self {
+        self.offscreen = offscreen;
+        self.adapter = Some(adapter);
+        self.sample_count = sample_count;
+        self
+    }
+
+    pub async fn build(self) -> Result<Renderer<'a>, wgpu::RequestDeviceError> {
+        if self.offscreen {
+            let adapter = self.adapter.unwrap();
+            let device = DeviceBuilder::new(adapter).build().await?;
+
+            Ok(Renderer { device, sample_count: self.sample_count })
+        } else {
+            let instance = self.instance.unwrap();
+            let surface = self.surface.unwrap();
+            let adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    compatible_surface: Some(&surface),
+                    power_preference: wgpu::PowerPreference::default(),
+                    force_fallback_adapter: false,
+                })
+                .await
+                .unwrap();
+
+            let device = DeviceBuilder::new(adapter)
+                .with_surface(surface)
+                .build()
+                .await?;
+            Ok(Renderer { device, sample_count: self.sample_count })
+        }
+    }
+}
+
 #[derive(Debug)]
-pub struct Renderer {
-    pub device: Device,
+pub struct Renderer<'a> {
+    pub device: Device<'a>,
     /// Enables MSAA for values > 1.
     pub(crate) sample_count: u32,
 }
 
-impl Renderer {
-    pub async fn for_surface(
-        surface: wgpu::Surface,
-        instance: &wgpu::Instance,
-        sample_count: u32,
-    ) -> Result<Self, Error> {
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .ok_or(Error::NoAdaptersFound)?;
-
-        Ok(Self {
-            device: Device::for_surface(surface, &adapter).await?,
-            sample_count,
-        })
-    }
-
-    pub async fn offscreen(adapter: &wgpu::Adapter, sample_count: u32) -> Result<Self, Error> {
-        Ok(Self {
-            device: Device::offscreen(adapter).await?,
-            sample_count,
-        })
-    }
-
+impl<'a> Renderer<'a> {
     pub const fn sample_count(&self) -> u32 {
         self.sample_count
     }
 
     pub fn configure<PresentMode: Into<wgpu::PresentMode>>(
         &mut self,
-        size: Size<u32, ScreenSpace>,
+        size: Size<u32>,
         mode: PresentMode,
         format: TextureFormat,
     ) {
@@ -87,7 +120,7 @@ impl Renderer {
 
     pub fn texture(
         &self,
-        size: Size<u32, ScreenSpace>,
+        size: Size<u32>,
         format: wgpu::TextureFormat,
         usage: wgpu::TextureUsages,
         multisampled: bool,
@@ -99,14 +132,14 @@ impl Renderer {
 
     pub fn framebuffer(
         &self,
-        size: Size<u32, ScreenSpace>,
+        size: Size<u32>,
         format: wgpu::TextureFormat,
     ) -> Framebuffer {
         self.device
             .create_framebuffer(size, format, self.sample_count)
     }
 
-    pub fn zbuffer(&self, size: Size<u32, ScreenSpace>) -> DepthBuffer {
+    pub fn zbuffer(&self, size: Size<u32>) -> DepthBuffer {
         self.device.create_zbuffer(size, self.sample_count)
     }
 
@@ -139,16 +172,14 @@ impl Renderer {
         let desc = T::description();
         let pip_layout = self.device.create_pipeline_layout(desc.pipeline_layout);
         let vertex_layout = VertexLayout::from(desc.vertex_layout);
-        let vs = self.device.create_shader(desc.vertex_shader);
-        let fs = self.device.create_shader(desc.fragment_shader);
+        let shader = self.device.create_shader(desc.shader);
 
         T::setup(
             self.device.create_pipeline(
                 pip_layout,
                 vertex_layout,
                 blending,
-                &vs,
-                &fs,
+                &shader,
                 format,
                 MultisampleState {
                     count: self.sample_count,
@@ -175,15 +206,15 @@ impl Renderer {
         });
 
         encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &fb.texture.wgpu,
                 mip_level: 0,
                 origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
                 aspect: TextureAspect::All,
             },
-            wgpu::ImageCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &gpu_buffer,
-                layout: wgpu::ImageDataLayout {
+                layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     // TODO: Must be a multiple of 256
                     bytes_per_row: Some(4 * fb.texture.size.width),
@@ -192,7 +223,7 @@ impl Renderer {
             },
             fb.texture.extent,
         );
-        let submission_index = self.device.submit(vec![encoder.finish()]);
+        // let submission_index = self.device.submit(vec![encoder.finish()]);
 
         let mut buffer: Vec<u8> = Vec::with_capacity(bytesize);
 
@@ -204,21 +235,19 @@ impl Renderer {
             *result = Some(map_result);
         });
 
-        let mut queue_empty = self
-            .device
-            .wgpu
-            .poll(wgpu::MaintainBase::WaitForSubmissionIndex(submission_index));
+        // let mut queue_empty = self
+        //     .device
+        //     .wgpu
+        //     .poll(wgpu::MaintainBase::WaitForSubmissionIndex(submission_index));
         loop {
             let result = result.lock().unwrap().take();
             match result {
                 Some(Ok(())) => break,
                 Some(Err(err)) => return Err(err),
                 None => {
-                    assert!(!queue_empty);
-
                     // We didn't get our map callback, but the submission is done.
                     // We'll keep polling the device until we get our map callback.
-                    queue_empty = self.device.wgpu.poll(wgpu::MaintainBase::Poll);
+                    // queue_empty = self.device.wgpu.poll(wgpu::MaintainBase::Poll);
                 }
             }
         }
@@ -238,9 +267,9 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn update_pipeline<'a, T>(&mut self, pip: &'a T, p: T::PrepareContext)
+    pub fn update_pipeline<'b, T>(&mut self, pip: &'b T, p: T::PrepareContext)
     where
-        T: AbstractPipeline<'a>,
+        T: AbstractPipeline<'b>,
     {
         if let Some((buffer, uniforms)) = pip.prepare(p) {
             self.device
@@ -272,12 +301,12 @@ pub enum Op<'a, T> {
     Transfer {
         f: &'a dyn Canvas<Color = T>,
         buf: &'a [T],
-        rect: SizedRect<i32, ScreenSpace>,
+        rect: Rect<i32>,
     },
     Blit(
         &'a dyn Canvas<Color = T>,
-        SizedRect<u32, ScreenSpace>,
-        SizedRect<u32, ScreenSpace>,
+        Rect<u32>,
+        Rect<u32>,
     ),
 }
 
@@ -341,20 +370,22 @@ impl<'a> RenderPassExt<'a> for wgpu::RenderPass<'a> {
                 resolve_target,
                 ops: wgpu::Operations {
                     load: op.to_wgpu(),
-                    store: true,
+                    store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.),
-                    store: true,
+                    store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(0),
-                    store: true,
+                    store: wgpu::StoreOp::Store,
                 }),
             }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
         })
     }
 
@@ -424,7 +455,7 @@ pub struct RenderFrame {
     pub view: wgpu::TextureView,
     pub wgpu: Option<wgpu::SurfaceTexture>,
     pub depth: DepthBuffer,
-    pub size: Size<u32, Pixels>,
+    pub size: Size<u32>,
 }
 
 impl RenderTarget for RenderFrame {

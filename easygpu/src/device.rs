@@ -1,75 +1,74 @@
-use figures::{Pixels, Size};
+use figures::Size;
 use wgpu::util::DeviceExt;
 use wgpu::{
     CompositeAlphaMode, FilterMode, MultisampleState, SubmissionIndex, TextureFormat, TextureUsages,
 };
 
 use crate::binding::{Bind, Binding, BindingGroup, BindingGroupLayout};
+use crate::blending::Blending;
 use crate::buffers::{DepthBuffer, Framebuffer, IndexBuffer, UniformBuffer, VertexBuffer};
-use crate::pipeline::{Blending, Pipeline, PipelineLayout, Set};
+use crate::pipeline::{Pipeline, PipelineLayout, Set};
 use crate::sampler::Sampler;
 use crate::shader::Shader;
 use crate::texture::Texture;
-use crate::transform::ScreenSpace;
 use crate::vertex::VertexLayout;
 
-#[derive(Debug)]
-pub struct Device {
-    pub wgpu: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub surface: Option<wgpu::Surface>,
-    size: Size<u32, Pixels>,
+pub struct DeviceBuilder<'a> {
+    adapter: wgpu::Adapter,
+    surface: Option<wgpu::Surface<'a>>,
 }
 
-impl Device {
-    pub async fn for_surface(
-        surface: wgpu::Surface,
-        adapter: &wgpu::Adapter,
-    ) -> Result<Self, wgpu::RequestDeviceError> {
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
-                    label: None,
-                },
-                None,
-            )
-            .await?;
-
-        Ok(Self {
-            wgpu: device,
-            queue,
-            surface: Some(surface),
-            size: Size::default(),
-        })
-    }
-
-    pub async fn offscreen(adapter: &wgpu::Adapter) -> Result<Self, wgpu::RequestDeviceError> {
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
-                    label: None,
-                },
-                None,
-            )
-            .await?;
-
-        Ok(Self {
-            wgpu: device,
-            queue,
+impl<'a> DeviceBuilder<'a> {
+    pub fn new(adapter: wgpu::Adapter) -> Self {
+        Self {
+            adapter,
             surface: None,
-            size: Size::default(),
-        })
+        }
     }
 
+    pub fn with_surface(mut self, surface: wgpu::Surface<'a>) -> DeviceBuilder<'a> {
+        self.surface = Some(surface);
+        self
+    }
+
+    pub async fn build(self) -> Result<Device<'a>, wgpu::RequestDeviceError> {
+        let (device, queue) = self
+            .adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                    label: None,
+                    memory_hints: Default::default(),
+                },
+                None,
+            )
+            .await?;
+
+        Ok(Device {
+            wgpu: device,
+            queue,
+            surface: self.surface,
+            size: Size::default(), 
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct Device<'a> {
+    pub wgpu: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub surface: Option<wgpu::Surface<'a>>,
+    size: Size<u32>,
+}
+
+
+impl Device<'_> {
     pub const fn device(&self) -> &wgpu::Device {
         &self.wgpu
     }
 
-    pub const fn size(&self) -> Size<u32, Pixels> {
+    pub const fn size(&self) -> Size<u32> {
         self.size
     }
 
@@ -84,7 +83,7 @@ impl Device {
 
     pub fn configure<PM: Into<wgpu::PresentMode>>(
         &mut self,
-        size: Size<u32, ScreenSpace>,
+        size: Size<u32>,
         mode: PM,
         format: TextureFormat,
     ) {
@@ -96,7 +95,9 @@ impl Device {
             height: size.height,
             alpha_mode: CompositeAlphaMode::Auto,
             view_formats: Vec::new(),
+            desired_maximum_frame_latency: 2,
         };
+
         self.surface
             .as_ref()
             .expect("create_swap_chain only works when initalized with a wgpu::Surface")
@@ -107,23 +108,12 @@ impl Device {
     pub fn create_pipeline_layout(&self, ss: &[Set]) -> PipelineLayout {
         let mut sets = Vec::new();
         for (i, s) in ss.iter().enumerate() {
-            sets.push(self.create_binding_group_layout(i as u32, s.0))
+            sets.push(self.create_binding_group_layout(i as u32, s.0));
         }
         PipelineLayout { sets }
     }
 
-    pub fn create_shader(&self, source: &[u8]) -> Shader {
-        Shader {
-            wgpu: self
-                .wgpu
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    source: wgpu::util::make_spirv(source),
-                    label: None, // TODO labels would be nice
-                }),
-        }
-    }
-
-    pub fn create_shader_from_wgsl(&self, source: &str) -> Shader {
+    pub fn create_shader(&self, source: &str) -> Shader {
         Shader {
             wgpu: self
                 .wgpu
@@ -134,14 +124,9 @@ impl Device {
         }
     }
 
-    pub fn create_encoder(&self) -> wgpu::CommandEncoder {
-        self.wgpu
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None })
-    }
-
     pub fn create_texture(
         &self,
-        size: Size<u32, ScreenSpace>,
+        size: Size<u32>,
         format: TextureFormat,
         usage: TextureUsages,
         sample_count: u32,
@@ -174,7 +159,7 @@ impl Device {
 
     pub fn create_framebuffer(
         &self,
-        size: Size<u32, ScreenSpace>,
+        size: Size<u32>,
         format: TextureFormat,
         sample_count: u32,
     ) -> Framebuffer {
@@ -210,7 +195,7 @@ impl Device {
         }
     }
 
-    pub fn create_zbuffer(&self, size: Size<u32, ScreenSpace>, sample_count: u32) -> DepthBuffer {
+    pub fn create_zbuffer(&self, size: Size<u32>, sample_count: u32) -> DepthBuffer {
         let format = DepthBuffer::FORMAT;
         let extent = wgpu::Extent3d {
             width: size.width,
@@ -328,7 +313,7 @@ impl Device {
             bindings.push(wgpu::BindGroupLayoutEntry {
                 binding: bindings.len() as u32,
                 visibility: s.stage,
-                ty: s.binding.to_wgpu(),
+                ty: s.binding.into(),
                 count: None,
             });
         }
@@ -377,12 +362,11 @@ impl Device {
         pipeline_layout: PipelineLayout,
         vertex_layout: VertexLayout,
         blending: Blending,
-        vs: &Shader,
-        fs: &Shader,
+        shader: &Shader,
         swapchain_format: TextureFormat,
         multisample: MultisampleState,
     ) -> Pipeline {
-        let vertex_attrs = vertex_layout.to_wgpu();
+        let vertex_attrs = (&vertex_layout).into();
 
         let mut sets = Vec::new();
         for s in pipeline_layout.sets.iter() {
@@ -404,9 +388,10 @@ impl Device {
                 label: None,
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
-                    module: &vs.wgpu,
-                    entry_point: "main",
+                    module: &shader.wgpu,
+                    entry_point: Some("vs_main"),
                     buffers: &[vertex_attrs],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -436,8 +421,8 @@ impl Device {
                 multisample,
                 multiview: None,
                 fragment: Some(wgpu::FragmentState {
-                    module: &fs.wgpu,
-                    entry_point: "main",
+                    module: &shader.wgpu,
+                    entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: swapchain_format,
                         blend: Some(wgpu::BlendState {
@@ -455,7 +440,9 @@ impl Device {
 
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 }),
+                cache: None,
             });
 
         Pipeline {

@@ -4,6 +4,8 @@ use wgpu::ShaderStages;
 #[derive(Debug)]
 pub struct BindingGroup {
     pub wgpu: wgpu::BindGroup,
+    /// The index of the binding group in the pipeline
+    /// This matches the n index value of the corresponding @group(n) attribute in the shader code
     pub set_index: u32,
 }
 
@@ -37,7 +39,7 @@ pub trait Bind {
 }
 
 /// A binding type.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum BindingType {
     UniformBuffer,
     UniformBufferDynamic,
@@ -45,9 +47,9 @@ pub enum BindingType {
     SampledTexture { multisampled: bool },
 }
 
-impl BindingType {
-    pub fn to_wgpu(&self) -> wgpu::BindingType {
-        match self {
+impl From<BindingType> for wgpu::BindingType {
+    fn from(binding_type: BindingType) -> Self {
+        match binding_type {
             BindingType::UniformBuffer => wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
@@ -55,12 +57,12 @@ impl BindingType {
             },
             BindingType::UniformBufferDynamic => wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
+                has_dynamic_offset: true,
                 min_binding_size: None,
             },
             BindingType::SampledTexture { multisampled } => wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                multisampled: *multisampled,
+                multisampled,
                 view_dimension: wgpu::TextureViewDimension::D2,
             },
             BindingType::Sampler => wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),

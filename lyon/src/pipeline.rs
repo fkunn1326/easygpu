@@ -22,7 +22,7 @@ pub struct Uniforms {
 }
 
 pub trait VertexShaderSource {
-    fn shader() -> &'static [u8];
+    fn shader() -> &'static str;
 
     fn sampler_format() -> TextureFormat;
 }
@@ -31,22 +31,12 @@ pub struct Srgb;
 pub struct Normal;
 
 impl VertexShaderSource for Srgb {
-    fn shader() -> &'static [u8] {
-        include_bytes!("shaders/shape-srgb.vert.spv")
+    fn shader() -> &'static str {
+        include_str!("shaders/shape.wgsl")
     }
 
     fn sampler_format() -> TextureFormat {
         TextureFormat::Bgra8UnormSrgb
-    }
-}
-
-impl VertexShaderSource for Normal {
-    fn shader() -> &'static [u8] {
-        include_bytes!("shaders/shape.vert.spv")
-    }
-
-    fn sampler_format() -> TextureFormat {
-        TextureFormat::Bgra8Unorm
     }
 }
 
@@ -59,13 +49,12 @@ where
 
     fn description() -> PipelineDescription<'a> {
         PipelineDescription {
-            vertex_layout: &[VertexFormat::Float3, VertexFormat::UByte4],
+            vertex_layout: &[VertexFormat::Floatx3, VertexFormat::UBytex4],
             pipeline_layout: &[Set(&[Binding {
                 binding: BindingType::UniformBuffer,
                 stage: ShaderStages::VERTEX,
             }])],
-            vertex_shader: T::shader(),
-            fragment_shader: include_bytes!("shaders/shape.frag.spv"),
+            shader: include_str!("shaders/shape.wgsl"),
         }
     }
 

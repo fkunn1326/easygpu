@@ -1,4 +1,4 @@
-use figures::SizedRect;
+use figures::Rect;
 
 use crate::binding::Bind;
 use crate::buffers::DepthBuffer;
@@ -7,7 +7,6 @@ use crate::color::Bgra8;
 use crate::device::Device;
 use crate::renderer::RenderTarget;
 use crate::texture::Texture;
-use crate::transform::ScreenSpace;
 /// Off-screen framebuffer. Can be used as a render target in render passes.
 #[derive(Debug)]
 pub struct Framebuffer {
@@ -18,7 +17,7 @@ pub struct Framebuffer {
 impl Framebuffer {
     /// Size in pixels of the framebuffer.
     pub fn size(&self) -> usize {
-        self.texture.size.cast::<usize>().area().get()
+        self.texture.size.area() as usize
     }
 
     /// Framebuffer width, in pixels.
@@ -66,7 +65,7 @@ impl Canvas for Framebuffer {
     fn transfer(
         &self,
         buf: &[Self::Color],
-        rect: SizedRect<i32, ScreenSpace>,
+        rect: Rect<i32>,
         device: &mut Device,
         encoder: &mut wgpu::CommandEncoder,
     ) {
@@ -75,8 +74,8 @@ impl Canvas for Framebuffer {
 
     fn blit(
         &self,
-        from: SizedRect<u32, ScreenSpace>,
-        dst: SizedRect<u32, ScreenSpace>,
+        from: Rect<u32>,
+        dst: Rect<u32>,
         encoder: &mut wgpu::CommandEncoder,
     ) {
         Texture::blit(&self.texture, from, dst, encoder);

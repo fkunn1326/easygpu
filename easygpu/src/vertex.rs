@@ -1,60 +1,68 @@
 #[derive(Debug, Clone, Copy)]
 pub enum VertexFormat {
     Float,
-    Float2,
-    Float3,
-    Float4,
-    UByte4,
+    Floatx2,
+    Floatx3,
+    Floatx4,
+    UBytex4,
 }
 
 impl VertexFormat {
     const fn bytesize(self) -> usize {
         match self {
-            VertexFormat::Float => 4,
-            VertexFormat::Float2 => 8,
-            VertexFormat::Float3 => 12,
-            VertexFormat::Float4 => 16,
-            VertexFormat::UByte4 => 4,
+            VertexFormat::Float => std::mem::size_of::<f32>() as usize,
+            VertexFormat::Floatx2 => std::mem::size_of::<[f32; 2]>() as usize,
+            VertexFormat::Floatx3 => std::mem::size_of::<[f32; 3]>() as usize,
+            VertexFormat::Floatx4 => std::mem::size_of::<[f32; 4]>() as usize,
+            VertexFormat::UBytex4 => std::mem::size_of::<u32>() as usize,
         }
     }
-
-    const fn to_wgpu(self) -> wgpu::VertexFormat {
-        match self {
+}
+impl From<VertexFormat> for wgpu::VertexFormat {
+    fn from(format: VertexFormat) -> Self {
+        match format {
             VertexFormat::Float => wgpu::VertexFormat::Float32,
-            VertexFormat::Float2 => wgpu::VertexFormat::Float32x2,
-            VertexFormat::Float3 => wgpu::VertexFormat::Float32x3,
-            VertexFormat::Float4 => wgpu::VertexFormat::Float32x4,
-            VertexFormat::UByte4 => wgpu::VertexFormat::Unorm8x4,
+            VertexFormat::Floatx2 => wgpu::VertexFormat::Float32x2,
+            VertexFormat::Floatx3 => wgpu::VertexFormat::Float32x3,
+            VertexFormat::Floatx4 => wgpu::VertexFormat::Float32x4,
+            VertexFormat::UBytex4 => wgpu::VertexFormat::Unorm8x4,
         }
     }
 }
 
-/// Describes a 'VertexBuffer' layout.
 #[derive(Default, Debug)]
 pub struct VertexLayout {
-    wgpu_attrs: Vec<wgpu::VertexAttribute>,
+    attributes: Vec<wgpu::VertexAttribute>,
     size: usize,
 }
 
 impl VertexLayout {
-    pub fn from(formats: &[VertexFormat]) -> Self {
-        let mut vl = Self::default();
-        for vf in formats {
-            vl.wgpu_attrs.push(wgpu::VertexAttribute {
-                shader_location: vl.wgpu_attrs.len() as u32,
-                offset: vl.size as wgpu::BufferAddress,
-                format: vf.to_wgpu(),
+    pub fn from(vertex_formats: &[VertexFormat]) -> Self {
+        let mut layouts: Self = Self::default();
+        for format in vertex_formats {
+            layouts.attributes.push(wgpu::VertexAttribute {
+                shader_location: layouts.attributes.len() as u32,
+                offset: layouts.size as wgpu::BufferAddress,
+                format: (*format).into(),
             });
-            vl.size += vf.bytesize();
+            layouts.size += format.bytesize();
         }
-        vl
+        layouts
     }
+}
 
-    pub fn to_wgpu(&self) -> wgpu::VertexBufferLayout {
+impl<'a> From<&'a VertexLayout> for wgpu::VertexBufferLayout<'a> {
+    fn from(layout: &'a VertexLayout) -> Self {
         wgpu::VertexBufferLayout {
-            array_stride: self.size as wgpu::BufferAddress,
+            array_stride: layout.size as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: self.wgpu_attrs.as_slice(),
+            attributes: layout.attributes.as_slice(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct VertexBuffer {
+    pub size: u64,
+    pub buffer: wgpu::Buffer,
 }
